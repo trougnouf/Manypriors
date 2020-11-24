@@ -1,0 +1,10 @@
+tot_step: 4000000
+train_lambda: 2048
+out_channel_N: 192
+out_channel_M: 256
+lossf: mse
+arch: ManyPriors
+num_distributions: 64
+dist_patch_size: 1
+optimizer_init: Adam
+two_worse_before_lr_update: true

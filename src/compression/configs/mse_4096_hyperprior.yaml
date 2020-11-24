@@ -1,0 +1,10 @@
+tot_step: 6000000
+train_lambda: 4096
+out_channel_N: 192
+out_channel_M: 256
+lossf: mse
+arch: Balle2018PTTFExp
+conditional_distribution: Laplace
+dist_patch_size: 1
+optimizer_init: Adam
+two_worse_before_lr_update: true

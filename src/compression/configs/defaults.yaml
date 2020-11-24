@@ -1,0 +1,33 @@
+---
+global_step: 0
+tot_epoch: 10000000
+tot_step: 6000000
+train_lambda: 4096
+base_lr: 0.0001
+lr_decay: 0.99
+lr_update_mode: worse_than_previous
+batch_size: 4
+print_freq: 250
+out_channel_N: 192
+out_channel_M: 256
+lossf: mse
+arch: Balle2017ManyPriors
+num_distributions: 64
+dist_patch_size: 1
+seed: 234
+save_model_freq: 2500
+test_step: 2500
+image_size: 256
+train_data_dpaths:
+  - '../../datasets/train/resized/1024/FeaturedPictures'
+  - '../../datasets/train/resized/1024/Formerly_featured_pictures_on_Wikimedia_Commons'
+  - '../../datasets/train/resized/1024/Photographs_taken_on_Ektachrome_and_Elite_Chrome_film'
+test_dpath: '../../datasets/test/kodak'
+test_commons_dpath: '../../datasets/test/Commons_Test_Photographs'
+device: 0
+optimizer_init: Adam # Adam, RangerLars
+conditional_distribution: Laplace # Laplace, Gaussian
+activation_function: GDN # GDN, Hardswish, GELU
+bitparm_init_mode: normal # normal, xavier_uniform
+bitparm_init_range: 0.01
+in_fpath: "../../datasets/test/Commons_Test_Photographs/Garden_snail_moving_down_the_Vennbahn_in_disputed_territory_(DSCF5879).png"
