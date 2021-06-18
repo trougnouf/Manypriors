@@ -1,6 +1,6 @@
 PyTorch reference implementation of
 "End-to-end optimized image compression with competition of prior distributions"
-by Trougnouf / Benoit Brummer ( https://github.com/trougnouf/Manypriors )
+by Benoit Brummer and Christophe De Vleeschouwer ( https://github.com/trougnouf/Manypriors )
 
 Forked from PyTorch implementation of
 "Variational image compression with a scale hyperprior"
