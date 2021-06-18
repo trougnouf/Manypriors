@@ -28,7 +28,7 @@ except ModuleNotFoundError:
 
 
 class Balle2017ManyPriors_ImageCompressor(abstract_model.AbstractImageCompressor):
-    def __init__(self, out_channel_N=192, out_channel_M=320, lossf='mse', device='cuda:0', num_distributions = 64, dist_patch_size=1, nchans_per_prior=None, min_feat=-127, max_feat=128, q_intv=1, precision=16, entropy_coding=False, model_param='2018', activation_function='GDN', **kwargs):
+    def __init__(self, out_channel_N=192, out_channel_M=320, lossf='mse', device='cuda:0', num_distributions = 64, dist_patch_size=1, nchans_per_prior=None, min_feat=-127, max_feat=128, q_intv=1, precision=16, entropy_coding=False, model_param='2018', activation_function='GDN', passthrough_ae=False, encoder_cls=None, decoder_cls=None, **kwargs):
         '''
         max cost to encode the prior: (bits_per_prior) / (patch_size)**2; typically 6 * (16**2) = 0.0234375
         for SpaceChans encoding:
@@ -40,11 +40,14 @@ class Balle2017ManyPriors_ImageCompressor(abstract_model.AbstractImageCompressor
             "2017" for original Balle2017 paper
             "2018" to use encoder/decoder subnetwork of Balle2018 paper (default)
         '''
-        super().__init__(out_channel_N=out_channel_N, out_channel_M=out_channel_M, lossf=lossf, device=device, min_feat=min_feat, max_feat=max_feat, q_intv=q_intv, precision=precision, entropy_coding=entropy_coding)
+        super().__init__(out_channel_N=out_channel_N, out_channel_M=out_channel_M, lossf=lossf, device=device, min_feat=min_feat, max_feat=max_feat, q_intv=q_intv, precision=precision, entropy_coding=entropy_coding, passthrough_ae=passthrough_ae)
         self.nchans_per_prior = nchans_per_prior
         if self.nchans_per_prior is None:
             self.nchans_per_prior = out_channel_M
         del self.bitEstimator_z
+        if encoder_cls is not None and decoder_cls is not None:
+            self.Encoder = encoder_cls(out_channel_N=out_channel_N, out_channel_M=out_channel_M, activation_function=activation_function)
+            self.Decoder = decoder_cls(out_channel_N=out_channel_N, out_channel_M=out_channel_M, activation_function=activation_function)
         if model_param == '2018' or model_param is None or model_param == 'None':
             self.Encoder = Balle2018PT_compressor.Analysis_net(out_channel_N=out_channel_N, out_channel_M=out_channel_M, activation_function=activation_function)
             self.Decoder = Balle2018PT_compressor.Synthesis_net(out_channel_N=out_channel_N, out_channel_M=out_channel_M, activation_function=activation_function)
@@ -61,6 +64,7 @@ class Balle2017ManyPriors_ImageCompressor(abstract_model.AbstractImageCompressor
         self.dists_last_use = np.zeros(self.num_distributions, dtype=int)
         ntargets = int((-self.min_feat+self.max_feat)/self.q_intv+1)
         self.entropy_table = torch.zeros(self.num_distributions, out_channel_M, ntargets, dtype=torch.short)
+
         # for i in range(self.num_distributions):
         #     self.bitEstimators.append(bitEstimator.BitEstimator(out_channel_M))
 
@@ -119,32 +123,26 @@ class Balle2017ManyPriors_ImageCompressor(abstract_model.AbstractImageCompressor
         feat2enc = feature.view(nch,-1).transpose(0,1).unsqueeze(-1)#.contiguous().long()
         min_feat = feat2enc.min()
         max_feat = feat2enc.max()
+        if min_feat < self.min_feat or max_feat > self.max_feat:
+            print(f"encode: warning: min_feat={min_feat}, max_feat={max_feat} exceed the current CDF tables' range [{self.min_feat},{self.max_feat}]")
+            print(f"Doubling the CDF table's size in this model's instance. This will increase runtime significantly; you likely want to clip the features instead.")
+            self.min_feat = self.min_feat-self.max_feat
+            self.max_feat *= 2
+            print(f'New values: model.min_feat={self.min_feat}, model.max_feat={self.max_feat}')
+            self.update_entropy_table()
+            nL = self.entropy_table.size(-1)
         min_index = (-self.min_feat + min_feat).long()
         max_index = (-self.min_feat + max_feat + 1).long()
         feat_indices_lower = (feat2enc - min_feat).unsqueeze(0).expand(self.num_distributions, -1, -1, -1).long()
         feat_indices_upper = feat_indices_lower + 1
 
-        #mindif = -self.min_feat+feat2enc.min()
         entropy_table = self.entropy_table_float[...,min_index:max_index+1]
 
-        #probs = torch.empty((self.num_distributions, h*w, nch), device=entropy_table.device)
         cdf_tbl = entropy_table.unsqueeze(1).expand(self.num_distributions, h*w, nch, entropy_table.size(-1))
-
         probs = torch.gather(cdf_tbl, 3, feat_indices_upper) - torch.gather(cdf_tbl, 3, feat_indices_lower)
 
-        #breakpoint()
-
-        #breakpoint()
-        ###
-        # sanity check: get probs directly from model (commented out)
-        #feat_indices_minus = (-self.min_feat+feat2enc)
-        #feat_indices_plus = (self.max_feat+feat2enc)
-        #probs_mod = self.bitEstimators(feature+.5) - self.bitEstimators(feature-.5)
-        #torch.equal(probs.flatten(), probs_mod.reshape(64,256,1536).transpose(1,2).flatten())
-        #print('feature min: {}, max: {}'.format(feature.min(), feature.max()))
         _, indices = torch.sum(torch.clamp(-1.0* torch.log(probs + 1e-10) / math.log(2.0), 0, 50), dim=(2)).min(0)
 
-        #breakpoint()
         # replace min_feat by self.mean_feat when using full range of probabilities
         cdf_tbl = torch.gather(self.entropy_table.unsqueeze(0).expand(h*w,self.num_distributions, nch, nL), 1, indices.view(-1, 1, 1, 1).expand(h*w, 1, nch, nL)).squeeze(1).unsqueeze(0)
 
@@ -199,39 +197,6 @@ class Balle2017ManyPriors_ImageCompressor(abstract_model.AbstractImageCompressor
         decoded_img = self.Decoder(features)
         return decoded_img#.cpu()
 
-    # inherited from abstract_model
-    # def complexity_analysis(self, input_image):
-    #     '''
-    #     egrun:
-    #         CUDA_AVAILABLE_DEVICES="" python train.py --test_flags complexity --pretrain mse_4096_b2017manypriors_64pr_16px_adam_2upd_d --device -1
-    #     '''
-
-    #     nL = self.entropy_table.size(-1)
-    #     timedict = dict()
-    #     #start = torch.cuda.Event(enable_timing=True)
-    #     #end = torch.cuda.Event(enable_timing=True)
-    #     #torch.cuda.synchronize()
-
-    #     # Encoding
-
-    #     #start.record()
-    #     # feature = torch.round(self.Encoder(input_image))
-    #     # bs, nch, h, w = feature.shape
-    #     # probs = self.bitEstimators(feature+.5) - self.bitEstimators(feature-.5)
-    #     # _, indices = torch.sum(torch.clamp(-1.0* torch.log(probs + 1e-10) / math.log(2.0), 0, 50), dim=(2)).min(0)
-    #     # cdf_tbl = torch.gather(self.entropy_table.unsqueeze(0).expand(h*w,self.num_distributions, nch, nL), 1, indices.view(-1, 1, 1, 1).expand(h*w, 1, nch, nL)).squeeze(1).unsqueeze(0)
-    #     # features_int = ((feature.view(1, nch, -1).transpose(1,2)-self.min_feat) / self.q_intv).round().short().flatten()
-    #     print(input_image.shape)
-    #     with torch.autograd.profiler.profile(use_cuda=False) as prof:
-    #         tic = time.perf_counter()
-    #         feature, z, h, w = self.encode(input_image)
-    #         elapsed_time = time.perf_counter()-tic
-    #     print(prof.key_averages())
-    #     print(elapsed_time)
-    #     breakpoint()
-
-
-
     def segment(self, input_image, output_fpath):
         '''
         egrun:
@@ -248,7 +213,6 @@ Command Line Args:   --pretrain mse_4096_b2017manypriors_64pr_16px_adam_2upd_d -
 
             probs = self.bitEstimators(compressed_feature_renorm+0.5) - self.bitEstimators(compressed_feature_renorm-0.5)
             dist_select = torch.sum(torch.clamp(- torch.log2(probs + 1e-10), 0, 50), dim=(2)).argmin(0)
-
         del(compressed_feature_renorm)
         del(probs)
 
@@ -263,9 +227,8 @@ Command Line Args:   --pretrain mse_4096_b2017manypriors_64pr_16px_adam_2upd_d -
         segmented[0] = torch.gather(r, 0, dist_select.long())
         segmented[1] = torch.gather(g, 0, dist_select.long())
         segmented[2] = torch.gather(b, 0, dist_select.long())
-
+        
         pt_helpers.tensor_to_imgfile(segmented, output_fpath)
-
 
 
 
@@ -345,12 +308,6 @@ Command Line Args:   --pretrain mse_4096_b2017manypriors_64pr_16px_adam_2upd_d -
                     # missing torchac
                     pass
 
-                # # get best indices fun
-                # tic = time.perf_counter()
-                # probs = self.bitEstimators(feature+0.5) - self.bitEstimators(feature-0.5)
-                # total_bits = torch.sum(torch.clamp(- torch.log2(probs + 1e-10), 0, 50), dim=(2,3,4)) # per dist_i, batch
-                # minbits, dist_select = total_bits.min(0)
-                # timedict['getindices_nn'].append(time.perf_counter()-tic)
 
                 logger.info(timedict)
 
@@ -363,17 +320,24 @@ Command Line Args:   --pretrain mse_4096_b2017manypriors_64pr_16px_adam_2upd_d -
 
     def forward(self, input_image):
         num_dists_to_force_train = 0
-        quant_noise_feature = torch.zeros(input_image.size(0), self.out_channel_M, input_image.size(2) // 16, input_image.size(3) // 16, device=self.device)
-        quant_noise_feature = torch.nn.init.uniform_(torch.zeros_like(quant_noise_feature), -0.5, 0.5)
+
         im_shape = input_image.shape
         feature = self.Encoder(input_image)
 
-        feature_renorm = feature
         if self.training:
-            compressed_feature_renorm = feature_renorm + quant_noise_feature
+            quant_noise_feature = torch.zeros(input_image.size(0), self.out_channel_M, input_image.size(2) // 16, input_image.size(3) // 16, device=self.device)
+            quant_noise_feature = torch.nn.init.uniform_(torch.zeros_like(quant_noise_feature), -0.5, 0.5)
+            compressed_feature_entropy = feature + quant_noise_feature
+            if self.passthrough_ae:  # ae: round, entropy: noise
+
+                compressed_feature_ae = pt_ops.RoundNoGradient().apply(feature)
+            else:  # ae: noise, entropy: noise
+                compressed_feature_ae = compressed_feature_entropy
         else:
-            compressed_feature_renorm = torch.round(feature_renorm)
-        recon_image = self.Decoder(compressed_feature_renorm)
+            # ae and entropy: round
+            compressed_feature_entropy = torch.round(feature)
+            compressed_feature_ae = compressed_feature_entropy
+        recon_image = self.Decoder(compressed_feature_ae)
         # recon_image = prediction + recon_res
         clipped_recon_image = recon_image.clamp(0., 1.)
         # distortion
@@ -384,15 +348,15 @@ Command Line Args:   --pretrain mse_4096_b2017manypriors_64pr_16px_adam_2upd_d -
         total_bits_feature = 0
 
         if self.dist_patch_size == 1 and self.nchans_per_prior == self.out_channel_M:
-            probs = self.bitEstimators(compressed_feature_renorm+0.5) - self.bitEstimators(compressed_feature_renorm-0.5)
+            probs = self.bitEstimators(compressed_feature_entropy+0.5) - self.bitEstimators(compressed_feature_entropy-0.5)
             total_bits = torch.sum(torch.clamp(- torch.log2(probs + 1e-10), 0, 50), dim=(2))
             minbits, dist_select = total_bits.min(0)
-            feature_batched_shape = compressed_feature_renorm.shape
-            max_num_dists_to_force_train = int(compressed_feature_renorm.size(0)*compressed_feature_renorm.size(2)*compressed_feature_renorm.size(3)*0.1)
+            feature_batched_shape = compressed_feature_entropy.shape
+            max_num_dists_to_force_train = int(compressed_feature_entropy.size(0)*compressed_feature_entropy.size(2)*compressed_feature_entropy.size(3)*0.1)
 
             #im_batched = compressed_feature_renorm
         else:
-            im_batched = pt_ops.img_to_batch(compressed_feature_renorm, self.dist_patch_size, self.nchans_per_prior)
+            im_batched = pt_ops.img_to_batch(compressed_feature_entropy, self.dist_patch_size, self.nchans_per_prior)
             feature_batched_shape = im_batched.shape
             probs = self.bitEstimators(im_batched+0.5) - self.bitEstimators(im_batched-0.5)
             total_bits = torch.sum(torch.clamp(- torch.log2(probs + 1e-10), 0, 50), dim=(2,3,4)) # per dist_i, batch
@@ -418,7 +382,7 @@ Command Line Args:   --pretrain mse_4096_b2017manypriors_64pr_16px_adam_2upd_d -
             total_bits_feature_theo = torch.gather(total_bits,0,dist_select.unsqueeze(0)).sum()
             logger.info('theobits')
             logger.info(total_bits_feature_theo)
-            bitstream, nbytes = self.entropy_encode(compressed_feature_renorm, dist_select)
+            bitstream, nbytes = self.entropy_encode(compressed_feature_entropy, dist_select)
             total_bits_feature = nbytes * 8
             logger.info('actualbits')
             logger.info(total_bits_feature)
@@ -431,25 +395,6 @@ Command Line Args:   --pretrain mse_4096_b2017manypriors_64pr_16px_adam_2upd_d -
         bpp = bpp_feature + bpp_sidestring
         return clipped_recon_image, visual_loss, bpp_feature, bpp_sidestring, bpp, used_dists_cpu.tolist(), num_dists_to_force_train
 
-    # def compress(self, input_image, entropy_coding=True):
-    #     start = torch.cuda.Event(enable_timing=True)
-    #     end = torch.cuda.Event(enable_timing=True)
-    #     feature = torch.round(self.Encoder(input_image))
-    #     # entropy_table: dists, ch, L
-    #     if entropy_coding:
-
-    #         '''
-    #         entropy table: dists, ch, L
-    #         get best indices:
-    #             evaluate feature: dists, h*w, ch
-    #         pass cdf_tbl (1, h*w, ch, L) to entropy coder:
-    #             using best dist
-    #         '''
-    #         pass
-    #     #z = self.priorEncoder(feature)
-    #     #compressed_z = torch.round(z)
-    #     compressed_feature = torch.round(feature)
-    #     return compressed_feature, None
 
     def entropy_encode_find_best_priors(self, features, *args):
         '''

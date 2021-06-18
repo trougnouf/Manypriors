@@ -1,20 +1,23 @@
 # -*- coding: utf-8 -*-
 '''
-Train a compression model. See configs/default.yaml for default parameters, libs/initfun.py:parser_add_argument for
-parameters definition.
+Train a compression model. See ../../config/compression/default.yaml for default parameters,
+libs/initfun.py:parser_add_argument for parameters definition.
 '''
 
 import torch
 import logging
 import time
 import os
-import tensorboardX
+try:
+    import torch.utils.tensorboard as tensorboardX
+except ModuleNotFoundError:
+    import tensorboardX
 import unittest
 import sys
 sys.path.append('..')
 from common.extlibs import radam
 from common.extlibs import pt_rangelars
-from compression.libs import initfun
+from compression.libs import initfun  # argparse is here
 from compression.libs import Meter
 from common.libs import locking
 from compression.libs import model_ops
@@ -46,6 +49,8 @@ def parser_add_arguments(parser) -> None:
     parser.add_argument('--optimizer_init', help='Initial optimizer: '+str(OPTIMIZERS.keys()))
     parser.add_argument('--optimizer_final', help='Final optimizer: '+str(OPTIMIZERS.keys()))
     parser.add_argument('--optimizer_switch_step', type=int, help='# of steps after which optimizer_final is chosen')
+    parser.add_argument('--passthrough_ae', dest='passthrough_ae', action='store_true')
+    parser.add_argument('--no_passthrough_ae', dest='passthrough_ae', action='store_false')
 
 def parser_autocomplete(args):
     args.pretrain_prefix = 'val' if args.val_dpath is not None else 'test'
@@ -260,6 +265,7 @@ def train_handler(args, jsonsaver, device):
         #     optimizer = torch.load(args.pretrain+'.opt.module', map_location=device)
         if args.reset_lr:
             reset_lr(optimizer, model, args.base_lr)
+    # FIXME freeze_autoencoder is likely wrong; should replace the optimizer with one that doesn't have the AE parameters
     if args.freeze_autoencoder or (args.freeze_autoencoder_steps is not None and args.freeze_autoencoder_steps > global_step):
         logger.info('Freezing autoencoder (experimental)')
         model.freeze_autoencoder()
@@ -309,16 +315,16 @@ class Test_train(unittest.TestCase):
                                                      ['--num_distributions', '64', '--arch', 'Balle2017ManyPriors', '--tot_step', '5000', '--train_lambda', '128', '--expname', 'unittest_scratch'])
         device = pt_helpers.get_device(args.device)
         train_handler(args, jsonsaver, device)
-        self.assertTrue(os.path.isfile(os.path.join('checkpoints', 'unittest_scratch', 'trainres.json')))
-        self.assertTrue(os.path.isfile(os.path.join('checkpoints', 'unittest_scratch', 'saved_models', 'iter_5000.pth')))
+        self.assertTrue(os.path.isfile(os.path.join('..', '..' ,'models' ,'compression', 'unittest_scratch', 'trainres.json')))
+        self.assertTrue(os.path.isfile(os.path.join('..', '..' ,'models' ,'compression', 'unittest_scratch', 'saved_models', 'iter_5000.pth')))
         # load that model
         # train from scratch
         args, jsonsaver = initfun.get_args_jsonsaver(parser_add_arguments, parser_autocomplete,
                                                      ['--num_distributions', '64', '--arch', 'Balle2017ManyPriors', '--tot_step', '5000', '--train_lambda', '64', '--pretrain', 'unittest_scratch', '--expname', 'unittest_load', '--reset_global_step'])
         device = pt_helpers.get_device(args.device)
         train_handler(args, jsonsaver, device)
-        self.assertTrue(os.path.isfile(os.path.join('checkpoints', 'unittest_load', 'trainres.json')))
-        self.assertTrue(os.path.isfile(os.path.join('checkpoints', 'unittest_load', 'saved_models', 'iter_5000.pth')))
+        self.assertTrue(os.path.isfile(os.path.join('..', '..' ,'models' ,'compression', 'unittest_load', 'trainres.json')))
+        self.assertTrue(os.path.isfile(os.path.join('..', '..' ,'models' ,'compression' , 'unittest_load', 'saved_models', 'iter_5000.pth')))
 
 
 

@@ -35,6 +35,18 @@ try:
     from compression.models.SIREN_compressor import *
 except ModuleNotFoundError:
     pass
+try:
+    from compression.models.quadtree_compressor import *
+except ModuleNotFoundError:
+    pass
+try:
+    from dc.models.manynets_dc import *
+except ModuleNotFoundError:
+    pass
+try:
+    from dc.models.Balle20182xL_compressor import *
+except ModuleNotFoundError:
+    pass
 #ARCHS = 'Balle2018PT', 'PixelShuffle4c', 'ESPCNsynth'  # TODO gen from imports_ImageCompressor
 # TODO arch search: disable bitrate estimation / loss
 
@@ -48,6 +60,9 @@ def save_model(model, iter, name, optimizer=None):
 
 
 def load_model(model, fpath, device='cuda:0'):
+    '''
+    step is infered from fpath
+    '''
     device = pt_helpers.get_device(device)
     try:
         with open(fpath, 'rb') as f:
@@ -59,7 +74,7 @@ def load_model(model, fpath, device='cuda:0'):
     except RuntimeError as e:
         print(e)
         with open(fpath, 'rb') as f:
-            pretrained_dict = torch.load(f)
+            pretrained_dict = torch.load(f, map_location=device)
             model_dict = model.state_dict()
             if 'bitEstimators' in str(e):
                 pretrained_dict = {k: v for k, v in pretrained_dict.items() if (k in model_dict and 'bitEstimators' not in k)}
@@ -84,10 +99,13 @@ class CustomModel_ImageCompressor(abstract_model.AbstractImageCompressor):
         self.priorEncoder = globals()[analysis_prior_arch](out_channel_N=out_channel_N, out_channel_M=out_channel_M)
 
 
-def init_model(arch: str, device='cuda:0', **kwargs):
-    arch_class_str = 'ImageCompressor'
+def init_model(arch: str, device='cuda:0', std_suffix: str = 'ImageCompressor', **kwargs):
+    '''
+    std_suffix is 'ImageCompressor' (for most compression models) or 'DC' (for denoisecompress)
+    '''
+    arch_class_str = std_suffix
     device = pt_helpers.get_device(device)
-    if arch is not None and arch != 'ImageCompressor':
+    if arch is not None and arch != 'ImageCompressor' and arch != 'DC':
         arch_class_str = '{}_{}'.format(arch, arch_class_str)
     try:
         return globals()[arch_class_str](device=device, **kwargs).to(device)
@@ -95,8 +113,8 @@ def init_model(arch: str, device='cuda:0', **kwargs):
         print(e)
         print('Invalid architecture: {}. List of valid architectures:'.format(arch))
         for arch in globals():
-            if '_ImageCompressor' in arch:
-                print(arch.split('_ImageCompressor')[0])
+            if '_'+std_suffix in arch:
+                print(arch.split('_'+std_suffix)[0])
         exit(-1)
 
 # # Keep this as-is for compatibility

@@ -42,7 +42,7 @@ def _renorm_cast_cdf_(cdf, precision):
     return cdf
 
 class AbstractImageCompressor(nn.Module):
-    def __init__(self, out_channel_N=192, out_channel_M=320, lossf='mse', device='cuda:0', min_feat=-127, max_feat=128, min_feat_gaussian=-127, max_feat_gaussian=128, q_intv=1, precision=16, entropy_coding=False, conditional_distribution='Laplace', **kwargs):#, out_channel_M=320, lossf='mse'):
+    def __init__(self, out_channel_N=192, out_channel_M=320, lossf='mse', device='cuda:0', min_feat=-127, max_feat=128, min_feat_gaussian=-127, max_feat_gaussian=128, q_intv=1, precision=16, entropy_coding=False, conditional_distribution='Laplace', passthrough_ae=False, **kwargs):#, out_channel_M=320, lossf='mse'):
         super(AbstractImageCompressor, self).__init__()
         # DBG: targets should be 0.5?
         self.entropy_coding = entropy_coding and 'torchac' in sys.modules
@@ -77,6 +77,9 @@ class AbstractImageCompressor(nn.Module):
             self.conditional_distribution = torch.distributions.normal.Normal
         self.num_distributions = 1
         self.frozen_autoencoder = False
+        self.passthrough_ae = passthrough_ae
+        #if passthrough_ae:
+        #    self.roundNoGradient = pt_ops.RoundNoGradient()
         # DBG
         # self.min_feat = -255
         # self.max_feat = 256
@@ -110,17 +113,29 @@ class AbstractImageCompressor(nn.Module):
         feature = self.Encoder(input_image)
         batch_size = feature.size()[0]
         z = self.priorEncoder(feature)
+
         if self.training:
             compressed_z = z + quant_noise_z
         else:
             compressed_z = torch.round(z)
         recon_sigma = self.priorDecoder(compressed_z)
-        feature_renorm = feature
+
+
         if self.training:
-            compressed_feature_renorm = feature_renorm + quant_noise_feature
+            quant_noise_feature = torch.zeros(input_image.size(0), self.out_channel_M, input_image.size(2) // 16, input_image.size(3) // 16, device=self.device)
+            quant_noise_feature = torch.nn.init.uniform_(torch.zeros_like(quant_noise_feature), -0.5, 0.5)
+            compressed_feature_entropy = feature + quant_noise_feature
+            if self.passthrough_ae:  # ae: round, entropy: noise
+
+                compressed_feature_ae = pt_ops.RoundNoGradient().apply(feature)
+            else:  # ae: noise, entropy: noise
+                compressed_feature_ae = compressed_feature_entropy
         else:
-            compressed_feature_renorm = torch.round(feature_renorm)
-        recon_image = self.Decoder(compressed_feature_renorm)
+            # ae and entropy: round
+            compressed_feature_entropy = torch.round(feature)
+            compressed_feature_ae = compressed_feature_entropy
+
+        recon_image = self.Decoder(compressed_feature_ae)
         clipped_recon_image = recon_image.clamp(0., 1.)
 
         visual_loss = self.lossfun(recon_image, input_image)
@@ -139,7 +154,7 @@ class AbstractImageCompressor(nn.Module):
             total_bits = torch.sum(torch.clamp(-1.0 * torch.log(prob + 1e-10) / math.log(2.0), 0, 50))
             #breakpoint()
             return total_bits, prob
-        total_bits_feature, _ = feature_probs_based_sigma(compressed_feature_renorm, recon_sigma)
+        total_bits_feature, _ = feature_probs_based_sigma(compressed_feature_entropy, recon_sigma)
 
         im_shape = input_image.size()
         bpp_feature = total_bits_feature / (batch_size * im_shape[2] * im_shape[3])

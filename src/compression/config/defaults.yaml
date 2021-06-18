@@ -22,7 +22,9 @@ train_data_dpaths:
   - '../../datasets/train/resized/1024/FeaturedPictures'
   - '../../datasets/train/resized/1024/Formerly_featured_pictures_on_Wikimedia_Commons'
   - '../../datasets/train/resized/1024/Photographs_taken_on_Ektachrome_and_Elite_Chrome_film'
-test_dpath: '../../datasets/test/kodak'
+#test_dpath: '../../datasets/test/kodak'
+val_dpath: '../../datasets_clic_valid_2020'
+test_dpath: '../../datasets/test/clic_test_pro'
 test_commons_dpath: '../../datasets/test/Commons_Test_Photographs'
 device: 0
 optimizer_init: Adam # Adam, RangerLars
@@ -31,3 +33,4 @@ activation_function: GDN # GDN, Hardswish, GELU
 bitparm_init_mode: normal # normal, xavier_uniform
 bitparm_init_range: 0.01
 in_fpath: "../../datasets/test/Commons_Test_Photographs/Garden_snail_moving_down_the_Vennbahn_in_disputed_territory_(DSCF5879).png"
+passthrough_ae: true

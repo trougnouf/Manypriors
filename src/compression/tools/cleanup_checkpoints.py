@@ -8,6 +8,8 @@ import shutil
 sys.path.append('..')
 from common.libs import utilities
 
+CHECKPOINTS_DPATH = os.path.join('..', '..' ,'models' ,'compression')
+
 def find_last_epoch(dpath):
     files = os.listdir(dpath)
     greatest_epoch = -1
@@ -21,7 +23,7 @@ def find_last_epoch(dpath):
             continue
     return greatest_epoch
 
-def cleanup_checkpoints(expname=None, checkpoints_dir='checkpoints',
+def cleanup_checkpoints(expname=None, checkpoints_dir=CHECKPOINTS_DPATH,
                         keepers_def = None):
     '''orig: tcomp/tools/cleanup_checkpoints.py'''
     if keepers_def is None:
@@ -78,7 +80,7 @@ def cleanup_checkpoints(expname=None, checkpoints_dir='checkpoints',
 
 
 def cleanup_tests(expname=None, tests_dir='tests',
-                        keepers_def = None, checkpoints_dir='checkpoints'):
+                        keepers_def = None, checkpoints_dir=CHECKPOINTS_DPATH):
     '''orig: tcomp/tools/cleanup_checkpoints.py'''
     if keepers_def is None:
         keepers_def = set()

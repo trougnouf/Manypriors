@@ -13,6 +13,7 @@ try:
 except ModuleNotFoundError:
     print('datasets.py: warning: could not load siren dataset format')
 from common.libs import utilities
+from common.libs import pt_ops
 
 
 class Datasets(Dataset):
@@ -77,7 +78,7 @@ def get_train_loader(train_data_dir, image_size, batch_size):
     return train_dataset, train_loader
 
 class TestDirDataset(Dataset):
-    def __init__(self, data_dir, data_dir_2=None, resize=None, verbose=False):
+    def __init__(self, data_dir, data_dir_2=None, resize=None, verbose=False, crop_to_multiple=None):
         self.data_dir = data_dir
         self.data_dir_2 = data_dir_2
         if resize is not None:
@@ -86,8 +87,14 @@ class TestDirDataset(Dataset):
         self.resize = resize
         if not os.path.exists(data_dir):
             raise Exception(f"[!] {self.data_dir} not exitd")
-        self.image_path = sorted(glob(os.path.join(self.data_dir, "*.*")))
-        if data_dir_2 is not None and os.path.exists(data_dir_2):
+        elif os.path.isdir(data_dir):
+            self.image_path = sorted(glob(os.path.join(self.data_dir, "*.*")))
+        elif os.path.isfile(data_dir):
+            self.image_path = [data_dir]
+        if data_dir_2 is not None:
+            if not os.path.exists(data_dir_2):
+                raise ValueError(f'data_dir_2={data_dir_2} does not exist')
+                #raise ValueError(f'{data_dir_2=} does not exist')  # FIXME restore this (req modern python3)
             self.image_path_2 = sorted(glob(os.path.join(data_dir_2, "*.png")))
             if len(self.image_path_2) == 0:
                 self.image_path_2 = sorted(glob(os.path.join(data_dir_2, "*.jpg")))
@@ -95,6 +102,7 @@ class TestDirDataset(Dataset):
             transforms.ToTensor(),
         ])
         self.verbose = verbose
+        self.crop_to_multiple = crop_to_multiple
 
     def __getitem__(self, item):
         image_ori = self.image_path[item]
@@ -114,7 +122,11 @@ class TestDirDataset(Dataset):
                 size = utilities.filesize(image_ori2+'.bpg')
             else:
                 size = utilities.filesize(image_ori2)
+            if self.crop_to_multiple is not None:
+                return pt_ops.crop_to_multiple(image, self.crop_to_multiple), pt_ops.crop_to_multiple(image2, self.crop_to_multiple), size
             return image, image2, size
+        if self.crop_to_multiple is not None:
+            return pt_ops.crop_to_multiple(image, self.crop_to_multiple)
         return image
 
     def __len__(self):
